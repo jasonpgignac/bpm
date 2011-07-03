@@ -2,20 +2,26 @@ require "spec_helper"
 
 describe BPM::Project, "project_file_path" do
 
-  it "should return both project file paths" do
+  it "should return project file path" do
     path = fixtures('hello_world')
     expected = File.join(path, 'hello_world.json')
     BPM::Project.project_file_path(path).should == expected
   end
 
-  it "should return [] on a package" do
+  it "should return nil on a package" do
     path = fixtures('core-test')
     BPM::Project.project_file_path(path).should == nil
   end
 
-  it "should return [] on a project with no file" do
+  it "should return nil on a project with no file" do
     path = fixtures('simple_hello')
     BPM::Project.project_file_path(path).should == nil
+  end
+
+  it "should return project path with different name" do
+    path = fixtures('custom_name')
+    expected = File.join(path, 'MyProject.json')
+    BPM::Project.project_file_path(path).should == expected
   end
 
 end
@@ -129,60 +135,32 @@ describe BPM::Project, "project metadata" do
   
 end
 
-describe BPM::Project, "add_dependency" do
-  
+describe BPM::Project, "converting" do
   subject do
-    BPM::Project.new fixtures('hello_world')
+    BPM::Project.nearest_project(fixtures("hello_world")).as_json
   end
-  
-  it "should add a new hard dependency to project" do
-    subject.dirty?.should == false #precond
-    subject.dependencies['jquery'] == nil #precond
 
-    subject.add_dependency('jquery', '1.4.3').should == true
-    subject.dependencies['jquery'].should == '1.4.3'
-    subject.dirty?.should == true
+  it "should have bpm set to current version" do
+    subject["bpm"].should == BPM::VERSION
   end
-  
-  it "should replace existing hard dependency" do
-    subject.dirty?.should == false #precond
-    subject.dependencies['spade'].should == '0.5.0' # precond
-
-    subject.add_dependency('spade', '0.6.0').should == true
-    subject.dependencies['spade'].should == '0.6.0'
-    subject.dirty?.should == true
-  end
-  
-  it "setting dependency to same version should not become dirty" do
-    old_version = subject.dependencies['spade']
-    old_version.should_not == nil #precond
-    subject.dirty?.should == false
-    
-    subject.add_dependency('spade', old_version).should == false
-    subject.dependencies['spade'].should == old_version
-    subject.dirty?.should == false
-  end
-  
 end
 
-describe BPM::Project, "remove_dependency" do
-  
-  subject do
-    BPM::Project.new fixtures('hello_world')
-  end
-  
-  it "removing a missing dependency should do nothing" do
-    subject.dependencies['jquery'].should == nil # precond
-    subject.remove_dependency('jquery').should == false
-    subject.dependencies['jquery'].should == nil
-    subject.dirty?.should == false
-  end
-  
-  it "should remove existing hard dependency" do
-    subject.dependencies['spade'].should == '0.5.0' # precond
-    subject.remove_dependency('spade').should == true
-    subject.dependencies['spade'].should == nil
-    subject.dirty?.should == true
-  end
-  
+describe BPM::Project, "package_and_module_from_path" do
+
+  it "should find package in deps"
+
+  it "should fallback to self if not found in deps"
+
+  it "should throw error if no package"
+
+  it "should not match partial directories"
+  # i.e. packages/sproutcore should not match for packages/sproutcore-runtime
+
+  it "should handle and valid directory reference in package directories array"
+  # i.e. "lib": ["./lib", "./vendor/lib"]
+
+  it "should replace with directory names"
+
+  it "should not include lib directory in module name"
+
 end

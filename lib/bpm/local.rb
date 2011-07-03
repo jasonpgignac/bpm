@@ -10,13 +10,21 @@ module BPM
     end
 
     def pack(path, email=nil)
+      package_path = File.dirname(File.expand_path path)
+      cur_pwd = Dir.pwd
+
+      FileUtils.cd package_path if package_path != cur_pwd
       package = BPM::Package.new(nil, email || creds.email)
-      package.json_path = path
+      package.json_path = File.basename path
+      
+      
       if package.valid?
         silence do
           LibGems::Builder.new(package.to_spec).build
         end
       end
+
+      FileUtils.cd cur_pwd if package_path != cur_pwd
       package
     end
 
@@ -35,7 +43,25 @@ module BPM
         [spec.name, spec.version, spec.original_platform]
       end
     end
+    
+    def preferred_version(package, vers, prerelease)
+      dep = LibGems::Dependency.new package, vers
+      specs = LibGems.source_index.search dep
+      specs.last.version.to_s
+    end
 
+    def source_root(package, vers, prerelease)
+      dep = LibGems::Dependency.new package, vers
+      specs = LibGems.source_index.search dep
+
+      dep2 = LibGems::Dependency.new package, '>= 0'
+      specs2 = LibGems.source_index.search dep2 
+
+      spec = specs.last
+      spec &&
+      File.join(spec.installation_path, 'gems', "#{spec.name}-#{spec.version}") 
+    end
+    
     private
 
     def silence

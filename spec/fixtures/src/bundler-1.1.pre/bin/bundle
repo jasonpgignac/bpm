@@ -1,0 +1,20 @@
+#!/usr/bin/env spade
+
+// Non-functioning code just for testing
+
+# Check if an older version of bundler is installed
+require('bundler')
+
+try {
+  Bundler.CLI.start();
+} catch(e) {
+  if (e instanceof Bundler.BundlerError) {
+    Bundler.ui.error(e.message);
+    Bundler.ui.debug(e.backtrace.join("\n"));
+    exit(e.statusCode);
+  } else if (e instanceof Interrupt) {
+    Bundler.ui.error("\nQuitting...");
+    Bundler.ui.debug e.backtrace.join("\n");
+    exit(1);
+  }
+}

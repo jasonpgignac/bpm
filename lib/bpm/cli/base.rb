@@ -1,5 +1,4 @@
 require 'thor'
-require 'highline'
 
 module BPM
   module CLI
@@ -18,7 +17,7 @@ module BPM
       method_option :version,    :type => :string,  :default => ">= 0", :aliases => ['-v'],    :desc => 'Specify a version to install'
       method_option :prerelease, :type => :boolean, :default => false,  :aliases => ['--pre'], :desc => 'Install a prerelease version'
       def fetch(*packages)
-        project = BPM::Project.nearest_project(Dir.pwd) if packages.size==0
+        project = BPM::Project.nearest_project(Dir.pwd) if packages.empty?
         if project
           success = project.fetch_dependencies options[:verbose]
           if !success
@@ -56,52 +55,86 @@ module BPM
       end
 
       desc "add [PACKAGE]", "Add package to project"
-      method_option :version,    :type => :string,  :default => ">= 0", :aliases => ['-v'],    :desc => 'Specify a version to install'
-      method_option :prpkect,    :type => :string,  :default => nil, :aliases => ['-p'],    :desc => 'Specify project location other than working directory'
+      method_option :version,    :type => :string,  :default => nil, :aliases => ['-v'],    :desc => 'Specify a version to install'
+      method_option :project,    :type => :string,  :default => nil, :aliases => ['-p'],    :desc => 'Specify project location other than working directory'
       method_option :prerelease, :type => :boolean, :default => false,  :aliases => ['--pre'], :desc => 'Install a prerelease version'
       def add(*package_names)
-        
+        # map to dependencies
+        if package_names.empty?
+          abort "You must specify at least one package"
+        else
+          if package_names.size > 1 && options[:version]
+            abort "You can only name one package with the version option"
+          end
+
+          deps = {}
+          package_names.each do |name|
+            vers = options[:version] || (options[:prerelease] ? '>= 0-pre' : '>= 0')
+            if name =~ /^(.+?)(-(\d[\w\.]*))?\.bpkg$/
+              name = $1
+              vers = $3 if $3
+            end
+            deps[name] = vers
+          end
+        end
+
+        # find project
+        project = find_project
+
+        begin
+          project.add_dependencies deps, true
+          project.build :debug, true
+        rescue Exception => e
+          abort e.message
+        end
+      end
+
+      desc "remove [PACKAGE]", "Remove package from project"
+      method_option :project,    :type => :string,  :default => nil, :aliases => ['-p'],    :desc => 'Specify project location other than working directory'
+      def remove(*package_names)
+
+        # map to dependencies
         if package_names.size.zero?
           abort "You must specify at least one package"
         end
 
-        package_version = options[:version]
-        if package_names.size>1 && package_version != '>= 0'
-          abort "You can only name one package with the version option"
-        end
-        
-        if options[:project]
-          project_path = File.expand_path options[:project]
-          if BPM::Project.is_project_root? project_path
-            abort "#{project_path} does not appear to be managed by bpm"
-          else
-            project = BPM::Project.new project_path
-          end
-        else
-          project = BPM::Project.nearest_project Dir.pwd
-          if project.nil?
-            abort "You do not appear to be inside of a bpm project"
-          end
-        end
-
-        verbose = options[:verbose]
-        prerelease = options[:prerelease]
-
-        package_names.each do |package_name|
-          added_version = project.add_dependency(package_name, package_version, prerelease, verbose)
-          if added_version
-            say "Added #{package_name} (#{added_version})"
-          else
-            $stderr.write "Can't find package #{package_name} (#{package_version})"
-          end
+        begin
+          project = find_project
+          project.unbuild options[:verbose]
+          project.remove_dependencies package_names, true
+          project.build :debug, true
           
+        rescue Exception => e
+          abort e.message
         end
-        
-        project.save!
-        project.fetch_dependencies          
-        
       end
 
+      desc "autocompile", "Preview server that will autocompile assets.  Useful for hacking"
+      method_option :mode, :type => :string, :default => :debug, :aliases => ['-m'], :desc => 'Set build mode for compile (default debug)'
+      method_option :project,    :type => :string,  :default => nil, :aliases => ['-p'],    :desc => 'Specify project location other than working directory'
+      method_option :port,       :type => :string,  :default => '4020', :desc => "Port to host server on"
+      def autocompile
+        
+        project = find_project
+        puts project
+        BPM::Server.start project, :Port => options[:port]
+        
+      end
+      
+      desc "compile", "Build the bpm_package.js for development"
+      method_option :mode, :type => :string, :default => :debug, :aliases => ['-m'], :desc => 'Set build mode for compile (default debug)'
+      method_option :project,    :type => :string,  :default => nil, :aliases => ['-p'],    :desc => 'Specify project location other than working directory'
+      def compile
+        
+        begin
+          project = find_project
+          project.fetch_dependencies options[:verbose]
+          project.build options[:mode], options[:verbose]
+        rescue Exception => e
+          abort e.message
+        end
+      end
+      
       desc "login", "Log in with your BPM credentials"
       method_option :username,  :type => :string,  :default => nil, :aliases => ['-u'], :desc => 'Specify the username to login as'
       method_option :password,  :type => :string,  :default => nil, :aliases => ['-p'], :desc => 'Specify the login password'
@@ -110,6 +143,7 @@ module BPM
         password = options[:password]
 
         unless email && password
+          require 'highline'
           highline = HighLine.new
           say "Enter your BPM credentials."
 
@@ -178,41 +212,41 @@ module BPM
       end
 
       desc "new [NAME]", "Generate a new project skeleton"
+      method_option :path, :type => :string, :default => nil, :desc => 'Specify a different name for the project'
+      method_option :package, :type => :string, :default => nil, :desc => 'Specify a package template to build from'
       def new(name)
-        path = File.expand_path name
-        ProjectGenerator.new(self, name, path).run
-        init(path)
+        package = install_package(options[:package])
+        template_path = package ? package.template_path(:project) : nil
+
+        path = File.expand_path(options[:path] || underscore(name))
+        generator = get_generator(:project, package)
+        success = generator.new(self, name, path, template_path, package).run
+
+        run_init(name, path, package) if success
       end
 
       desc "init [PATHS]", "Configure a project to use bpm for management"
+      method_option :name, :type => :string, :default => nil, :desc => 'Specify a different name for the project'
+      method_option :skip, :type => :boolean, :default => false, :desc => 'Skip any conflicting files'
       def init(*paths)
         paths = [Dir.pwd] if paths.empty?
+        paths.map!{|p| File.expand_path(p) }
+
+        if paths.length > 1 && options[:name]
+          abort "Can't specify a name with multiple paths"
+        end
+
         paths.each do |path|
-          InitGenerator.new(self, path, path).run
+          run_init(options[:name] || File.basename(path), path)
         end
       end
 
-      desc "compile [PATH]", "Build the bpm_package for development"
-      method_option :mode, :type => :string, :default => :debug, :aliases => ['-m'], :desc => 'Set build mode for compile (default debug)'
-      def compile(path=nil)
-        project = Project.nearest_project(path || Dir.pwd)
-        if project.nil?
-          if path.nil?
-            abort "You do not appear to be in a valid bpm project.  Maybe you are in the wrong working directory?"
-          else
-            abort "No bpm project could be found at #{File.expand_path path}"
-          end
-        else
-          out = project.compile(options[:mode], nil, options[:verbose])
-          puts out.join("\n\n")
-        end
-      end
-
-      desc "build", "Build a bpm package from a package.json"
+      desc "build [PACKAGE]", "Build a bpm package from a package.json"
       method_option :email, :type => :string,  :default => nil,   :aliases => ['-e'],    :desc => 'Specify an author email address'
-      def build
+      def build(package_path=nil)
+        package_path ||= Dir.pwd
         local = BPM::Local.new
-        package = local.pack("package.json", options[:email])
+        package = local.pack(File.join(package_path, "package.json"), options[:email])
 
         if package.errors.empty?
           puts "Successfully built package: #{package.to_ext}"
@@ -243,10 +277,45 @@ module BPM
 
       private
 
+        def get_generator(type, package=nil)
+          require 'bpm/generator'
+          generator_pkg = package ? package.name : :default
+          package ? package.generator_for(type) : BPM.generator_for(type)
+        end
+
+        def run_init(name, path, package=nil)
+          template_path = package ? package.template_path(:init) : nil
+
+          generator = get_generator(:init, package)
+          generator.new(self, name, path, template_path, package).run
+
+          project = BPM::Project.new(path, name)
+          project.fetch_dependencies true
+          project.build :debug, true
+        end
+
         def report_arity_error(name)
           self.class.handle_argument_error(self.class.tasks[name], nil)
         end
 
+        def find_project
+          if options[:project]
+            project_path = File.expand_path options[:project]
+            if BPM::Project.is_project_root? project_path
+              abort "#{project_path} does not appear to be managed by bpm"
+            else
+              project = BPM::Project.new project_path
+            end
+          else
+            project = BPM::Project.nearest_project Dir.pwd
+            if project.nil?
+              abort "You do not appear to be inside of a bpm project"
+            end
+          end
+          
+          project
+        end
+        
         def print_specs(names, index)
           packages = {}
 
@@ -262,6 +331,28 @@ module BPM
               puts "#{name} (#{versions.sort.reverse.join(", ")})"
             end
           end
+        end
+
+        def install_package(pkg_name)
+          return nil unless pkg_name
+          begin
+            # Try remote first to get the latest versions
+            installed = BPM::Remote.new.install(pkg_name, ">= 0", false)
+          rescue LibGems::GemNotFoundException
+            dep = LibGems::Dependency.new(pkg_name)
+            installed = LibGems.source_index.search(dep)
+          end
+          spec = installed.find{|p| p.name == pkg_name }
+          abort "Unable to find package: #{pkg_name}" unless spec
+          BPM::Package.from_spec(spec)
+        end
+
+        def underscore(str)
+          str.gsub(/::/, '/').
+            gsub(/([A-Z]+)([A-Z][a-z])/,'\1_\2').
+            gsub(/([a-z\d])([A-Z])/,'\1_\2').
+            tr("-", "_").
+            downcase
         end
 
     end

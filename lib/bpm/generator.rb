@@ -1,15 +1,48 @@
+require 'thor'
+require 'bpm'
+
 module BPM
-  
+
+  def self.generators
+    @generators ||= {}
+  end
+
+  def self.register_generator(pkg, type, generator)
+    generators[pkg] ||= {}
+    generators[pkg][type] = generator
+  end
+
+  def self.generator_for(pkg_or_type, type=nil, default=true)
+    if type
+      pkg = pkg_or_type
+    else
+      pkg = :default
+      type = pkg_or_type
+    end
+
+    generator = generators[pkg] && generators[pkg][type]
+    generator ||= generators[:default] && generators[:default][type] if default
+    generator
+  end
+
   # Knows how to generate items out of the local templates directory
   class Generator
     include Thor::Actions
 
-    attr_reader :name
+    attr_reader :name, :package
 
-    def initialize(thor, name, root)
-      @thor, @name, @root = thor, name, root
+    def initialize(thor, name, root, template_path=nil, package=nil)
+      @thor, @name, @template_path, @package = thor, name, template_path, package
 
       self.destination_root = root
+    end
+
+    def dir_name
+      File.basename destination_root
+    end
+
+    def source_paths
+      [@template_path, self.class.source_root].compact
     end
 
   private
@@ -22,10 +55,6 @@ module BPM
       Time.now.year
     end
 
-    def source_paths
-      [self.class.source_root]
-    end
-
     def respond_to?(*args)
       super || @thor.respond_to?(*args)
     end
@@ -36,3 +65,5 @@ module BPM
   end
 end
 
+require 'bpm/init_generator'
+require 'bpm/project_generator'

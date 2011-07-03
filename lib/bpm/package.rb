@@ -2,28 +2,33 @@ require 'json'
 
 module BPM
   class Package
-    EXT      = "spd"
-    METADATA = %w[keywords licenses engines main bin directories bpm]
+    EXT      = "bpkg"
+    METADATA = %w[keywords licenses engines main bin directories]
     FIELDS   = %w[name version description author homepage summary]
     attr_accessor :metadata, :lib_path, :tests_path, :errors, :json_path, :attributes, :directories, :dependencies, :root_path
     attr_accessor *FIELDS
+
+    def self.from_spec(spec)
+      pkg = new(spec.full_gem_path)
+      pkg.bpkg = spec
+      pkg
+    end
 
     def initialize(root_path=nil, email = "")
       @root_path = root_path || Dir.pwd
       @json_path = File.join @root_path, 'package.json'
       @email     = email
       @attributes = {}
+      @dependencies = {}
       @directories = {}
       @metadata = {}
     end
 
-    def bpm
-      @bpm || BPM::VERSION
-    end
-
-    def bpkg=(path)
-      format = LibGems::Format.from_file_by_path(path)
-      fill_from_gemspec(format.spec)
+    def bpkg=(spec)
+      unless spec.is_a?(LibGems::Specification)
+        spec = LibGems::Format.from_file_by_path(spec.to_s).spec
+      end
+      fill_from_gemspec(spec)
     end
 
     def to_spec
@@ -37,7 +42,7 @@ module BPM
         spec.summary           = summary
         spec.description       = description
         spec.requirements      = [metadata.to_json]
-        spec.files             = directory_files + ["package.json"]
+        spec.files             = directory_files + template_files + transport_files + ["package.json"]
         spec.test_files        = glob_files(tests_path)
         spec.bindir            = bin_path
         spec.executables       = bin_files.map{|p| File.basename(p) } if bin_path
@@ -69,6 +74,20 @@ module BPM
       "#{self.to_full_name}.#{EXT}"
     end
 
+    def template_path(name)
+      path = File.join(root_path, 'templates', name.to_s)
+      File.exist?(path) ? path : nil
+    end
+
+    def generator_for(type)
+      unless generator = BPM.generator_for(name, type, false)
+        path = File.join(root_path, 'templates', "#{type}_generator.rb")
+        load path if File.exist?(path)
+        generator = BPM.generator_for(name, type)
+      end
+      generator
+    end
+
     def errors
       @errors ||= []
     end
@@ -89,6 +108,23 @@ module BPM
       read && parse
     end
 
+    def expanded_deps(project)
+      ret  = []
+      seen = []
+      todo = [self]
+      while todo.size > 0
+        pkg = todo.shift
+        pkg.dependencies.each do |dep_name|
+          next if seen.include? dep_name
+          seen << dep_name
+          found = project.local_deps.find { |x| x.name == dep_name }
+          todo << found
+          ret  << found
+        end
+      end
+      ret
+    end
+    
     # TODO: Make better errors
     # TODO: This might not work well with conflicting versions
     def local_deps(search_path=nil)
@@ -112,35 +148,6 @@ module BPM
       end
     end
 
-    def compile(mode=:production, project_path=root_path, verbose=false)
-      puts "Compiling #{name}" if verbose
-
-      require 'spade'
-      out = []
-      Spade::MainContext.new(:rootdir => project_path) do |ctx|
-        packages_path = File.join(project_path, "packages")
-        (local_deps(packages_path) << self).each do |pkg|
-          ctx.eval("spade.register(\"#{pkg.name}\", #{File.read(pkg.json_path)});");
-        end
-
-        paths = [*lib_path].map{|p| File.join(root_path, p) }
-        ids = paths.map do |p|
-          p += '/' if p[-1] != '/'
-          glob_files(p).map do |f|
-            f.sub(p, '').sub(/\.[^\.]+$/,'')
-          end
-        end.flatten
-        ids.each do |id|
-          puts "    #{name}/#{id}" if verbose
-          out << ctx.eval("spade.compile(\"#{name}/#{id}\", \"#{name}\");")
-        end
-      end
-
-      out.compact
-    end
-
-    private
-
     def directory_files
       directories.reject{|k,_| k == 'tests' }.values.map{|dir| glob_files(dir) }.flatten
     end
@@ -151,6 +158,14 @@ module BPM
       else
         []
       end
+    end
+
+    def template_files
+      glob_files("templates")
+    end
+
+    def transport_files
+      glob_files("transports")
     end
 
     def bin_path
@@ -165,6 +180,41 @@ module BPM
       @directories["tests"] || "tests"
     end
 
+    def transport_plugins(project)
+      plugin_modules('plugin:transport', project, false)
+    end
+    
+    def minifier_plugins(project)
+      [@attributes['plugin:minifier']].compact
+    end
+
+    def plugin_modules(key_name, project, own=true)
+      return [@attributes[key_name]] if own && @attributes[key_name]
+      dependencies.keys.map do |pkg_name| 
+        dep = project.local_deps.find do |pkg| 
+          pkg.load_json
+          pkg.name == pkg_name
+        end
+        dep.attributes[key_name]
+      end.compact
+    end
+      
+    # named directories that are expected to contain code.  These will be 
+    # searched for supported modules
+    def pipeline_libs
+      (@attributes['pipeline'] && @attributes['pipeline']['libs']) || ['lib']
+    end
+
+    def pipeline_css
+      (@attributes['pipeline'] && @attributes['pipeline']['css']) || ['css']
+    end
+
+    def pipeline_assets
+      (@attributes['pipeline'] && @attributes['pipeline']['assets']) || ['assets', 'resources']
+    end
+
+  private
+  
     def parse
       FIELDS.each do |field|
         send("#{field}=", @attributes[field])
@@ -195,7 +245,9 @@ module BPM
         end
       end
 
-      unless tests_path.nil? || File.directory?(File.join(@root_path, tests_path))
+      # look for actual 'tests' in directories hash since simply having no
+      # tests dir is allowed as well.
+      unless @directories['tests'].nil? || File.directory?(File.join(@root_path, tests_path))
         add_error "'#{tests_path}', specified for tests directory, is not a directory"
         success = false
       end
@@ -236,7 +288,9 @@ module BPM
       self.dependencies = {}
       spec.dependencies.each{|d| self.dependencies[d.name] = d.requirement.to_s }
 
-      self.metadata = JSON.parse(spec.requirements.first)
+      if spec.requirements && spec.requirements.size>0
+        self.metadata = JSON.parse(spec.requirements.first)
+      end
     end
 
   end

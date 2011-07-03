@@ -16,9 +16,9 @@ describe "bpm build when logged in" do
 
     exit_status.should be_success
     output = stdout.read
-    output.should include("Successfully built package: core-test-0.4.9.spd")
+    output.should include("Successfully built package: core-test-0.4.9.bpkg")
 
-    package = LibGems::Format.from_file_by_path("core-test-0.4.9.spd")
+    package = LibGems::Format.from_file_by_path("core-test-0.4.9.bpkg")
     package.spec.name.should == "core-test"
     package.spec.version.should == LibGems::Version.new("0.4.9")
     package.spec.email.should == email
@@ -32,27 +32,37 @@ describe "bpm build without logging in" do
 
   it "builds a bpm from a given package.json" do
     FileUtils.cp_r fixtures("core-test"), "."
-    #FileUtils.cp fixtures("package.json"), "core-test"
     cd "core-test"
-    bpm "build"
+    bpm "build", "-e", "joe@example.com"
 
     exit_status.should be_success
-    output = stdout.read
-
-    package = LibGems::Format.from_file_by_path("core-test-0.4.9.spd")
+  
+    package = LibGems::Format.from_file_by_path("core-test-0.4.9.bpkg")
     package.spec.name.should == "core-test"
     package.spec.version.should == LibGems::Version.new("0.4.9")
   end
+
+  it "builds a bpm when given a path to a package" do
+    FileUtils.cp_r fixtures("core-test"), "."
+    bpm "build", "core-test", "-e", "joe@example.com"
+
+    exit_status.should be_success
+    
+    cd 'core-test'
+    package = LibGems::Format.from_file_by_path("core-test-0.4.9.bpkg")
+    package.spec.name.should == "core-test"
+    package.spec.version.should == LibGems::Version.new("0.4.9")
+  end
+
   it "sets the email address if one is given" do
     FileUtils.cp_r fixtures("core-test"), "."
-    #FileUtils.cp fixtures("package.json"), "core-test"
     cd "core-test"
     bpm "build", "-e", "lucy@allen.com"
 
     exit_status.should be_success
     output = stdout.read
 
-    package = LibGems::Format.from_file_by_path("core-test-0.4.9.spd")
+    package = LibGems::Format.from_file_by_path("core-test-0.4.9.bpkg")
     package.spec.name.should == "core-test"
     package.spec.version.should == LibGems::Version.new("0.4.9")
     package.spec.email.should == "lucy@allen.com"

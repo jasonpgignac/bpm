@@ -1,0 +1,19 @@
+{
+  "name": "bundler",
+  "version": "1.1.pre",
+  "description": "bundler",
+  "summary": "rake summary",
+  "homepage": "http://bundler.com",
+  "author": "Joe",
+  "keywords": ["bundler"],
+
+  "dependencies": {
+    "spade": "0.5.0"
+  },
+  
+  "directories": {
+    "lib": "lib",
+    "bin": "bin",
+    "docs": "man"
+  }
+}
