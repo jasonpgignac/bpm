@@ -37,11 +37,13 @@ thing there.
 
 # Installing
 
-When we release, bpm will be available via PKG and MSI installers as well as via rubygems.  For now the best way to try bpm is to clone it from github and then:
+When we release, bpm will be available via PKG and MSI installers as well as via rubygems.  For now the best way to try bpm is to clone it from github and then from inside the directory, execute:
 
   `bundle install`
   
-From the directory.  (If you don't have bundler, you will need ruby 1.9.2 installed and type `gem install bundler` to get it.)
+If you don't have bundler, you will need ruby 1.9.2 installed and type `gem install bundler` to get it.
+
+At this point, you'll find the 'bpm' executable inside the 'bin' directory you cloned from github. You may wish to symlink this executable into your own bin directory. 
 
 # Current Development Status
 
